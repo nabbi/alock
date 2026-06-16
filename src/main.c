@@ -11,7 +11,9 @@
 
 #include "alock.h"
 
+#if ENABLE_XRENDER
 #include <X11/extensions/Xrender.h>
+#endif
 #include <ctype.h>
 #include <getopt.h>
 #include <locale.h>
@@ -32,6 +34,8 @@
 
 extern char **environ;
 
+
+#if ENABLE_XRENDER
 
 struct swCursor {
     Display     *display;
@@ -163,6 +167,21 @@ static void swCursorDestroy(struct swCursor *swc) {
     XFreeGC(dpy, swc->gc);
     free(swc);
 }
+static inline Window swCursorGetBgWin(struct swCursor *swc) { return swc->bg_win; }
+
+#else /* !ENABLE_XRENDER */
+
+struct swCursor;
+static inline struct swCursor *swCursorCreate(Display *d, Window w,
+                                              const struct aCursorImage *i)
+    { (void)d; (void)w; (void)i; return NULL; }
+static inline void swCursorMove(struct swCursor *s, int x, int y)
+    { (void)s; (void)x; (void)y; }
+static inline void swCursorRestamp(struct swCursor *s) { (void)s; }
+static inline void swCursorDestroy(struct swCursor *s) { (void)s; }
+static inline Window swCursorGetBgWin(struct swCursor *s) { (void)s; return None; }
+
+#endif /* ENABLE_XRENDER */
 
 static struct aModuleAuth *alock_modules_auth[] = {
 #if ENABLE_PAM
@@ -441,6 +460,7 @@ static int lockDisplay(Display *display, struct aModules *modules) {
     return 0;
 }
 
+#if ENABLE_XRENDER
 /* Repaint bg windows and re-stamp software cursor; blank hw cursor means no NVIDIA sprite corruption. */
 static void refreshSwCursorAfterResume(Display *display, struct aModules *modules,
                                        struct swCursor *swc) {
@@ -476,6 +496,15 @@ static void pollResumeState(Display *display, struct aModules *modules,
     *last_time = now;
 }
 
+#else /* !ENABLE_XRENDER */
+
+static inline void pollResumeState(Display *display, struct aModules *modules,
+                                   struct swCursor *swc,
+                                   unsigned long *last_time)
+    { (void)display; (void)modules; (void)swc; *last_time = alock_mtime(); }
+
+#endif /* ENABLE_XRENDER */
+
 static void eventLoop(Display *display, struct aModules *modules,
                       struct swCursor *swc) {
 
@@ -510,7 +539,7 @@ static void eventLoop(Display *display, struct aModules *modules,
                     while (XCheckMaskEvent(display, PointerMotionMask, &mev))
                         swCursorMove(swc, mev.xmotion.x, mev.xmotion.y);
                     int need_restamp = 0;
-                    while (XCheckWindowEvent(display, swc->bg_win, ExposureMask, &mev))
+                    while (XCheckWindowEvent(display, swCursorGetBgWin(swc), ExposureMask, &mev))
                         need_restamp = 1;
                     if (need_restamp)
                         swCursorRestamp(swc);
@@ -539,7 +568,7 @@ static void eventLoop(Display *display, struct aModules *modules,
                     while (XCheckMaskEvent(display, PointerMotionMask, &mev))
                         swCursorMove(swc, mev.xmotion.x, mev.xmotion.y);
                     int need_restamp = 0;
-                    while (XCheckWindowEvent(display, swc->bg_win, ExposureMask, &mev))
+                    while (XCheckWindowEvent(display, swCursorGetBgWin(swc), ExposureMask, &mev))
                         need_restamp = 1;
                     if (need_restamp)
                         swCursorRestamp(swc);
