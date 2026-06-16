@@ -493,12 +493,6 @@ static void eventLoop(Display *display, struct aModules *modules) {
             debug("received configure notify event");
             break;
 
-#if 0
-        case Expose:
-            XClearWindow(dpy, ((XExposeEvent*)&ev)->window);
-            break;
-#endif
-
         }
     }
 }
