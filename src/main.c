@@ -208,6 +208,11 @@ static void waitForPaint(Display *display, Window *wins, int nwins,
     }
 }
 
+/* Software cursor needs image data from the cursor module and XRender at runtime. */
+static int useSwCursor(Display *display, struct aModules *modules) {
+    return modules->cursor->getimage() != NULL && alock_check_xrender(display);
+}
+
 /* Lock current display and grab pointer and keyboard. On successful
  * lock this function returns 0, otherwise -1. */
 static int lockDisplay(Display *display, struct aModules *modules) {
@@ -262,9 +267,7 @@ static int lockDisplay(Display *display, struct aModules *modules) {
     /* grab pointer and keyboard from the default screen */
     window = DefaultRootWindow(display);
 
-    int use_swcursor = (modules->cursor->getimage() != NULL);
-
-    if (use_swcursor) {
+    if (useSwCursor(display, modules)) {
         /* Blank hw cursor + PointerMotionMask: no save-under for NVIDIA to corrupt. */
         char no_data[8] = { 0 };
         XColor black = { 0 };
@@ -410,10 +413,10 @@ static void eventLoop(Display *display, struct aModules *modules,
                 setBacklightBrightness(0);
 #endif /* WITH_XBLIGHT */
 
-            /* poll for events so resume can be detected via clock jump */
-            while (XCheckMaskEvent(display, KeyPressMask | StructureNotifyMask, &ev) == False) {
-                /* Drain motion and Expose events; restamp cursor if bg was repainted. */
-                if (swc) {
+            if (swc) {
+                /* poll for events so resume can be detected via clock jump */
+                while (XCheckMaskEvent(display, KeyPressMask | StructureNotifyMask, &ev) == False) {
+                    /* Drain motion and Expose events; restamp cursor if bg was repainted. */
                     XEvent mev;
                     while (XCheckMaskEvent(display, PointerMotionMask, &mev))
                         swCursorMove(swc, mev.xmotion.x, mev.xmotion.y);
@@ -422,10 +425,13 @@ static void eventLoop(Display *display, struct aModules *modules,
                         need_restamp = 1;
                     if (need_restamp)
                         swCursorRestamp(swc);
+                    pollResumeState(display, modules, swc, &last_time);
+                    usleep(16000);
                 }
-                pollResumeState(display, modules, swc, &last_time);
-                usleep(swc ? 16000 : 100000);
             }
+            else
+                /* no software cursor, nothing to refresh on resume */
+                XMaskEvent(display, KeyPressMask | StructureNotifyMask, &ev);
 
 #if WITH_XBLIGHT
             /* restore original backlight brightness value */
@@ -582,6 +588,7 @@ int main(int argc, char **argv) {
 
     Display *display;
     struct aModules modules;
+    struct swCursor *swc = NULL;
     int retval;
 
     const char *args_auth = NULL;
@@ -800,15 +807,16 @@ int main(int argc, char **argv) {
 
     /* If the cursor module provides image data, set up the software overlay
      * on the primary screen's background window. */
-    struct swCursor *swc = NULL;
-    {
-        const struct aCursorImage *img = modules.cursor->getimage();
-        if (img) {
-            Window bg0 = modules.background->getwindow(0);
-            if (bg0 != None)
-                swc = swCursorCreate(display, bg0, img);
-            if (!swc)
-                fprintf(stderr, "alock: software cursor setup failed, using hardware cursor\n");
+    if (useSwCursor(display, &modules)) {
+        Window bg0 = modules.background->getwindow(0);
+        if (bg0 != None)
+            swc = swCursorCreate(display, bg0, modules.cursor->getimage());
+        if (!swc) {
+            /* Pointer is grabbed with a blank cursor; swap in the module
+             * cursor and drop PointerMotionMask. */
+            XChangeActivePointerGrab(display, 0,
+                    modules.cursor->getcursor(), CurrentTime);
+            fprintf(stderr, "alock: software cursor setup failed, using hardware cursor\n");
         }
     }
 

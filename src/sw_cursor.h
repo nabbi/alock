@@ -15,7 +15,7 @@
 #include <X11/Xlib.h>
 #include "alock.h"
 
-/* Opaque software cursor overlay state. */
+/* Software cursor overlay state (opaque handle, defined in sw_cursor.c). */
 struct swCursor;
 
 struct swCursor *swCursorCreate(Display *dpy, Window bg_win,
